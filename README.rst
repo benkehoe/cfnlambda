@@ -38,7 +38,7 @@ Quickstart
 
     from cfnlambda import CloudFormationCustomResource
 	
-	class ExternalServer(CloudFormationCustomResource):
+    class ExternalServer(CloudFormationCustomResource):
         DISABLE_PHYSICAL_RESOURCE_ID_GENERATION = True # get this from server
         
         def create(self):
