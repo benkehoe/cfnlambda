@@ -24,9 +24,10 @@ class CloudFormationCustomResource(object):
     def handler(event, context):
         MyCustomResource().handle(event, context)
     
-    The constructor takes the resource type name, which it will validate for 
-    incoming events. Optionally, a logger can be provided to the constructor;
-    otherwise, the logger will use the child class name.
+    The child class does not need to have a constructor. In this case, the resource
+    type name, which is validated by handle() method, is 'Custom::' + the child 
+    class name. The logger also uses the child class name. If either of these need
+    to be different, they can be provided to the parent constructor.
     
     Child classes must implement the create(), update(), and delete() methods.
     Each of these methods can indicate success or failure in one of two ways:
@@ -35,7 +36,9 @@ class CloudFormationCustomResource(object):
         In the case of failure, self.failure_reason can be set to a string to
         provide an explanation in the response.
     These methods can also populate the self.resource_outputs dictionary with fields
-    that then will be available in CloudFormation
+    that then will be available in CloudFormation. If the return value of the function
+    is a dict, that is merged into resource_outputs. If it is not a dict, the value
+    is stored under the 'result' key.
     
     Child classes may implement validate() and/or populate(). validate() should return
     True if self.resource_properties is valid. populate() can transfer the contents of
@@ -51,7 +54,8 @@ class CloudFormationCustomResource(object):
         requests to send the content to its destination. requests is loaded either
         directly if available, falling back to the vendored version in botocore.
     * generate_physical_resource_id_function is used to get a physical resource id
-        on a create call. It takes the custom resource object as input.This is normally
+        on a create call unless DISABLE_PHYSICAL_RESOURCE_ID_GENERATION is True.
+        It takes the custom resource object as input.This is normally
         set to CloudFormationCustomResource.generate_unique_physical_resource_id, which
         generates a physical resource id like CloudFormation:
         {stack_id}-{logical resource id}-{random string}
@@ -59,14 +63,17 @@ class CloudFormationCustomResource(object):
         * prefix: if for example the physical resource id must be an arn
         * separator: defaulting to '-'.
     * get_boto3_function takes no input and returns the boto3 module. This is used in
-        CloudFormationCustomResource.cfn_response for deleting the logs (if DELETE_LOGS
-        is set to True). This function could be replaced to use placebo https://github.com/garnaat/placebo
+        CloudFormationCustomResource.cfn_response for deleting the logs (if 
+        DELETE_LOGS_ON_STACK_DELETION is set to True). This function could be replaced
+        to use placebo https://github.com/garnaat/placebo
 
     The class provides four configuration options that can be overridden in child
     classes:
     * DELETE_LOGS_ON_STACK_DELETION: A boolean which, when True, will cause a successful
         stack deletion to trigger the deletion of the CloudWatch log group on stack
         deletion. If there is a problem during stack deletion, the logs are left in place.
+        NOTE: this is not intended for use when the Lambda function is used by multiple
+        stacks.
     * HIDE_STACK_DELETE_FAILURE: A boolean which, when True, will report
         SUCCESS to CloudFormation when a stack deletion is requested
         regardless of the success of the AWS Lambda function. This will

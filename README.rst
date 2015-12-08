@@ -11,6 +11,8 @@ three methods: :code:`create`, :code:`update`, and :code:`delete`, for each of t
 CloudFormation actions. Failure can be indicated by raising an exception.
 Logging to CloudWatch is provided by the :code:`logger` field.
 
+More details are available in the docs in the :code:`cfnlambda` module.
+
 Quickstart
 ----------
 
