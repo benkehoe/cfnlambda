@@ -41,6 +41,8 @@ Quickstart
     class ExternalServer(CloudFormationCustomResource):
         DISABLE_PHYSICAL_RESOURCE_ID_GENERATION = True # get this from server
         
+        # create_server, update_server, terminate_server methods implemented here
+        
         def create(self):
             properties:
             response = self.create_server(properties=self.resource_properties)
@@ -61,7 +63,7 @@ Quickstart
                 raise Exception('server termination failed')
     
     def handle(event, context):
-        Adder().handle(event, context)
+        ExternalServer().handle(event, context)
 
 The :code:`handle` method on :code:`CloudFormationCustomResource` does a few things. It logs
 the event and context, populates the class fields, generates a physical resource id
