@@ -1,282 +1,401 @@
-"""Collection of tools to enable use of AWS Lambda with CloudFormation.
+"""Base class for implementing Lambda functions backing custom CloudFormation resources.
 
-Classes:
-    Status: CloudFormation custom resource status constants
-    RequestType: CloudFormation custom resource request type constants
-    PythonObjectEncoder: Custom JSON Encoder that allows encoding of
-        un-serializable objects
-Functions:
-    cfn_response: Format and send a CloudFormation custom resource object.
-    handler_decorator: Decorate an AWS Lambda function to add exception
-        handling, emit CloudFormation responses and log.
+The class, CloudFormationCustomResource, has methods that child classes
+implement to create, update, or delete the resource, while taking care of the
+parsing of the input, exception handling, and response sending. The class does
+all of its importing inside its methods, so it can be copied over to, for
+example, write the Lambda function in the browser-based editor, or inline in
+CloudFormation once it supports that for Python.
+
+The module also provides a utilty function, generate_request, to create events
+for using in testing.
 
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at http://mozilla.org/MPL/2.0/.
 """
-import logging
-import json
-from functools import wraps
-import boto3
-from botocore.vendored import requests
-import traceback
-import httplib
 
-logger = logging.getLogger(__name__)
+class CloudFormationCustomResource(object):
+    """Base class for CloudFormation custom resource classes.
+    
+    To create a handler for a custom resource in CloudFormation, simply create a
+    child class (say, MyCustomResource), implement the methods specified below,
+    and implement the handler function:
+    def handler(event, context):
+        MyCustomResource().handle(event, context)
+    
+    The constructor takes the resource type name, which it will validate for 
+    incoming events. Optionally, a logger can be provided to the constructor;
+    otherwise, the logger will use the child class name.
+    
+    Child classes must implement the create(), update(), and delete() methods.
+    Each of these methods can indicate success or failure in one of two ways:
+    * Simply return or raise an exception
+    * Set self.status to self.STATUS_SUCCESS or self.STATUS_FAILED
+        In the case of failure, self.failure_reason can be set to a string to
+        provide an explanation in the response.
+    These methods can also populate the self.resource_outputs dictionary with fields
+    that then will be available in CloudFormation
+    
+    Child classes may implement validate() and/or populate(). validate() should return
+    True if self.resource_properties is valid. populate() can transfer the contents of
+    self.resource_properties into object fields, if this is not done by validate().
+    
+    Three hooks are provided to override behavior:
+    * finish_function, normally set to CloudFormationCustomResource.cfn_response, takes
+        as input the custom resource object and deals with sending the response and 
+        cleaning up.
+    * send_function, used within CloudFormationCustomResource.cfn_response, takes as
+        input the custom resource object, a url, and the response_content dictionary.
+        Normally this is set to CloudFormationCustomResource.send_response, which uses
+        requests to send the content to its destination. requests is loaded either
+        directly if available, falling back to the vendored version in botocore.
+    * generate_physical_resource_id_function is used to get a physical resource id
+        on a create call. It takes the custom resource object as input.This is normally
+        set to CloudFormationCustomResource.generate_unique_physical_resource_id, which
+        generates a physical resource id like CloudFormation:
+        {stack_id}-{logical resource id}-{random string}
+        It also provides two keyword arguments:
+        * prefix: if for example the physical resource id must be an arn
+        * separator: defaulting to '-'.
+    * get_boto3_function takes no input and returns the boto3 module. This is used in
+        CloudFormationCustomResource.cfn_response for deleting the logs (if DELETE_LOGS
+        is set to True). This function could be replaced to use placebo https://github.com/garnaat/placebo
 
-
-class Status:
-    """CloudFormation custom resource status constants
-
-    http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/crpg-ref-responses.html
+    The class provides four configuration options that can be overridden in child
+    classes:
+    * DELETE_LOGS_ON_STACK_DELETION: A boolean which, when True, will cause a successful
+        stack deletion to trigger the deletion of the CloudWatch log group on stack
+        deletion. If there is a problem during stack deletion, the logs are left in place.
+    * HIDE_STACK_DELETE_FAILURE: A boolean which, when True, will report
+        SUCCESS to CloudFormation when a stack deletion is requested
+        regardless of the success of the AWS Lambda function. This will
+        prevent stacks from being stuck in DELETE_FAILED states but will
+        potentially result in resources created by the AWS Lambda function
+        to remain in existence after stack deletion. If
+        HIDE_STACK_DELETE_FAILURE is False, an exception in the AWS Lambda
+        function will result in DELETE_FAILED upon an attempt to delete
+        the stack.
+    * DISABLE_PHYSICAL_RESOURCE_ID_GENERATION: If True, skips the automatic generation
+        of a unique physical resource id if the custom resource has a source for that
+        itself.
+    * PHYSICAL_RESOURCE_ID_MAX_LEN: An int used by generate_unique_physical_resource_id
+        when generating a physical resource id.
     """
-    SUCCESS = 'SUCCESS'
-    FAILED = 'FAILED'
-
-
-class RequestType:
-    """CloudFormation custom resource request type constants
-
-    http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/crpg-ref-requesttypes.html
-    """
-    CREATE = 'Create'
-    DELETE = 'Delete'
-    UPDATE = 'Update'
-
-
-class PythonObjectEncoder(json.JSONEncoder):
-    """Custom JSON Encoder that allows encoding of un-serializable objects
-
-    For object types which the json module cannot natively serialize, if the
-    object type has a __repr__ method, serialize that string instead.
-
-    Usage:
-        >>> example_unserializable_object = {'example': set([1,2,3])}
-        >>> print(json.dumps(example_unserializable_object,
-                             cls=PythonObjectEncoder))
-        {"example": "set([1, 2, 3])"}
-    """
-
-    def default(self, obj):
-        if isinstance(obj,
-                      (list, dict, str, unicode,
-                       int, float, bool, type(None))):
-            return json.JSONEncoder.default(self, obj)
-        elif hasattr(obj, '__repr__'):
-            return obj.__repr__()
+    DELETE_LOGS_ON_STACK_DELETION = False
+    HIDE_STACK_DELETE_FAILURE = True
+    
+    DISABLE_PHYSICAL_RESOURCE_ID_GENERATION = False
+    PHYSICAL_RESOURCE_ID_MAX_LEN = 128
+    
+    STATUS_SUCCESS = 'SUCCESS'
+    STATUS_FAILED = 'FAILED'
+    
+    REQUEST_CREATE = 'Create'
+    REQUEST_DELETE = 'Delete'
+    REQUEST_UPDATE = 'Update'
+    
+    def __init__(self, resource_type=None, logger=None):
+        import logging
+        if logger:
+            self.logger = logger
         else:
-            return json.JSONEncoder.default(self, obj.__repr__())
+            self.logger = logging.getLogger(self.__class__.__name__)
+        self._base_logger = logging.getLogger('CFCustomResource')
+        
+        if not resource_type:
+            resource_type = self.__class__.__name__
+        
+        if not (resource_type.startswith('Custom::') 
+                or resource_type == 'AWS::CloudFormation::CustomResource'):
+            resource_type = 'Custom::' + resource_type
+        
+        self.resource_type = resource_type
+        
+        self.request_type = None
+        self.response_url = None
+        self.stack_id = None
+        self.request_id = None
+        
+        self.logical_resource_id = None
+        self.physical_resource_id = None
+        self.resource_properties = None
+        self.old_resource_properties = None
+        
+        self.event = None
+        self.context = None
+        
+        self.status = None
+        self.failure_reason = None
+        self.resource_outputs = {}
+        
+        self.finish_function = self.cfn_response
+        self.send_response_function = self.send_response
+        
+        self.generate_physical_resource_id_function = self.get_mangled_physical_resource_id
+        
+        self.get_boto3_function = self.get_boto3
+        
+    def validate(self):
+        """Return True if self.resource_properties is valid."""
+        return True
+    
+    def populate(self):
+        """Populate fields from self.resource_properties and self.old_resource_properties,
+        if this is not done in validate()"""
+        pass
+    
+    def create(self):
+        raise NotImplementedError
+    
+    def update(self):
+        raise NotImplementedError
+    
+    def delete(self):
+        raise NotImplementedError
+    
+    def handle(self, event, context):
+        """Wrap this in a bare function to allow Lambda to call it"""
+        import json
+        self._base_logger.info('REQUEST RECEIVED: %s' % json.dumps(event))
+        def plainify(obj):
+            d = {}
+            for field, value in vars(obj).iteritems():
+                if isinstance(value,
+                          (str, unicode,
+                           int, float, bool, type(None))):
+                    d[field] = value
+                elif isinstance(value, (list, tuple)):
+                    d[field] = [plainify(v) for v in value]
+                elif isinstance(value, dict):
+                    d[field] = dict((k, plainify(v)) for k, v in value.iteritems())
+                else:
+                    d[field] = repr(value)
+        self._base_logger.info('LambdaContext: %s' % json.dumps(plainify(context)))
+        
+        self.event = event
+        self.context = context
+        
+        resource_type_in_event = event['ResourceType']
+        if resource_type_in_event != self.resource_type:
+            raise Exception('invalid resource type')
+        
+        self.request_type = event['RequestType']
+        self.response_url = event['ResponseURL']
+        self.stack_id = event['StackId']
+        self.request_id = event['RequestId']
+        
+        self.logical_resource_id = event['LogicalResourceId']
+        self.physical_resource_id = event.get('PhysicalResourceId')
+        self.resource_properties = event.get('ResourceProperties', {})
+        self.old_resource_properties = event.get('OldResourceProperties')
+        
+        try:
+            if not self.validate():
+                pass
+            
+            if not self.physical_resource_id and not self.DISABLE_PHYSICAL_RESOURCE_ID_GENERATION:
+                self.physical_resource_id = self.generate_physical_resource_id_function(self)
+            
+            self.populate()
+            
+            outputs = getattr(self, self.request_type.lower())()
+            
+            if outputs:
+                if not isinstance(outputs, dict):
+                    outputs = {'result': outputs}
+                self.resource_outputs.update(outputs)
+            
+            if not self.status:
+                self.status = self.STATUS_SUCCESS
+        except Exception, e:
+            import traceback
+            if not self.status:
+                self.status = self.STATUS_FAILED
+                self.failure_reason = 'Custom resource %s failed due to exception "%s".' % (self.__class__.__name__, e.message)
+            if self.failure_reason:
+                self._base_logger.error(str(self.failure_reason))
+            self._base_logger.debug(traceback.format_exc())
+            
+        if self.request_type == self.REQUEST_DELETE:
+            if self.status == self.STATUS_FAILED and self.HIDE_STACK_DELETE_FAILURE:
+                message = (
+                    'There may be resources created by the AWS '
+                    'Lambda that have not been deleted and cleaned up '
+                    'despite the fact that the stack status may be '
+                    'DELETE_COMPLETE.')
+                self._base_logger.error(message)
+                if self.failure_reason:
+                    self._base_logger.error('Reason for failure: ' + str(self.failure_reason))
+                self.status = self.STATUS_SUCCESS
 
-
-def validate_response_data(response_data):
-    """Turn any response data into a valid CloudFormation custom resource
-    provider Data response field.
-    http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/crpg-ref-responses.html
-
-    Returns:
-        Dictionary of name value pairs
-    """
-    if type(response_data) is not dict:
-        return {'result': json.dumps(response_data)}
-    else:
-        for key in response_data:
-            if type(response_data[key]) is not str:
-                response_data[key] = json.dumps(response_data[key])
-        return response_data
-
-
-def cfn_response(event,
-                 context,
-                 response_status,
-                 response_data={},
-                 physical_resource_id=None):
-    """Format and send a CloudFormation custom resource object.
-
-    Creates a JSON payload with a CloudFormation custom resource object[1],
-    then HTTP PUTs this payload to an AWS signed URL. Replicates the
-    functionality of the NodeJS cfn-response module in python.[2]
-
-    Args:
-        event: A dictionary containing CloudFormation custom resource provider
-            request fields.[3]
-        context: An AWS LambdaContext object containing lambda runtime
-            information.[4]
-        response_status: A status of SUCCESS or FAILED to send back to
-            CloudFormation.[2] Use the Status.SUCCESS and Status.FAILED
-            constants.
-        response_data: A dictionary of key value pairs to pass back to
-            CloudFormation which can be accessed with the Fn::GetAtt function
-            on the CloudFormation custom resource.[5]
-        physical_resource_id: An optional unique identifier of the custom
-            resource that invoked the function. By default, the name of the
-            CloudWatch Logs log stream is used.
-
-    Returns:
-        requests.Response object
-
-    Raises:
-        No exceptions raised
-
-    [1]: http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/aws-properties-lambda-function-code.html#cfn-lambda-function-code-cfnresponsemodule
-    [2]: http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/crpg-ref-responses.html
-    [3]: http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/crpg-ref-requests.html#crpg-ref-request-fields
-    [4]: http://docs.aws.amazon.com/lambda/latest/dg/python-context-object.html
-    [5]: http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/crpg-ref-responses.html#crpg-ref-responses-data
-    """
-    if physical_resource_id is None:
-        physical_resource_id = context.log_stream_name
-    response_data = validate_response_data(response_data)
-    body = {
-        "Status": response_status,
-        "Reason": ("See the details in CloudWatch Log Stream: %s" %
-                   context.log_stream_name),
-        "PhysicalResourceId": physical_resource_id,
-        "StackId": event['StackId'],
-        "RequestId": event['RequestId'],
-        "LogicalResourceId": event['LogicalResourceId'],
-        "Data": response_data
-    }
-    response_body = json.dumps(body)
-    logger.debug("Response body: %s", response_body)
-    try:
-        response = requests.put(event['ResponseURL'],
-                                data=response_body)
+            if self.status == self.STATUS_SUCCESS and self.DELETE_LOGS_ON_STACK_DELETION:
+                import logging
+                boto3 = self.get_boto3_function()
+                logging.disable(logging.CRITICAL)
+                logs_client = boto3.client('logs')
+                logs_client.delete_log_group(
+                    logGroupName=context.log_group_name)
+        
+        self.finish_function(self)
+    
+    @classmethod
+    def generate_unique_physical_resource_id(cls, resource, prefix='', separator='-'):
+        """Generate a unique physical resource id similar to how CloudFormation does"""
+        import random
+        import string
+    
+        stack_id = resource.stack_id.split(':')[-1]
+        if '/' in stack_id:
+            stack_id = stack_id.split('/')[1]
+        stack_id = stack_id.replace('-', '')
+    
+        max_len = resource.PHYSICAL_RESOURCE_ID_MAX_LEN-len(prefix)
+        
+        logical_resource_id = resource.logical_resource_id
+    
+        len_of_rand = 12
+        len_of_parts = max_len - len_of_rand - 2 * len(separator)
+        len_of_parts_diff = (len(stack_id) + len(logical_resource_id)) - len_of_parts
+        if len_of_parts_diff > 0:
+            len_of_stack_id = min(len(stack_id), len(stack_id) - len_of_parts_diff // 2)
+            len_of_resource = len_of_parts - len_of_stack_id
+            stack_id = stack_id[:len_of_stack_id]
+            logical_resource_id = logical_resource_id[:len_of_resource]
+        return '{prefix}{stack_id}{separator}{logical_id}{separator}{rand}'.format(
+            prefix=prefix,
+            separator=separator,
+            stack_id=stack_id,
+            logical_id=logical_resource_id,
+            rand=''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(len_of_rand)),
+            )
+    
+    @classmethod
+    def get_boto3(cls):
+        import boto3
+        return boto3
+    
+    @classmethod
+    def send_response(cls, resource, url, response_content):
+        import httplib, json
+        try:
+            import requests
+        except:
+            from botocore.vendored import requests
+        
+        put_response = requests.put(resource.response_url,
+                                    data=json.dumps(response_content))
         body_text = ""
-        if response.status_code // 100 != 2:
-            body_text = "\n" + response.text
-        logger.debug("Status code: %s %s%s" % (response.status_code, httplib.responses[response.status_code], body_text))
-        return response
-    except Exception as e:
-        logger.error("send(..) failed executing https.request(..): %s" %
-                     e.message)
-        logger.debug(traceback.format_exc())
+        if put_response.status_code // 100 != 2:
+            body_text = "\n" + put_response.text
+        resource._base_logger.debug("Status code: %s %s%s" % (put_response.status_code, httplib.responses[put_response.status_code], body_text))
+            
+        return put_response
+    
+    @classmethod
+    def cfn_response(cls, resource):
+        import json, traceback   
+        
+        physical_resource_id = resource.physical_resource_id
+        if physical_resource_id is None:
+            physical_resource_id = resource.context.log_stream_name
+        default_reason = ("See the details in CloudWatch Log Stream: %s" %
+                       resource.context.log_stream_name)
+        response_content = {
+            "Status": resource.status,
+            "Reason": resource.failure_reason or default_reason,
+            "PhysicalResourceId": physical_resource_id,
+            "StackId": resource.event['StackId'],
+            "RequestId": resource.event['RequestId'],
+            "LogicalResourceId": resource.event['LogicalResourceId'],
+            "Data": resource.resource_outputs
+        }
+        resource._base_logger.debug("Response body: %s", json.dumps(response_content))
+        try:
+            return resource.send_response_function(resource, resource.reponse_url, response_content)
+        except Exception as e:
+            resource._base_logger.error("send response failed: %s" % e.message)
+            resource._base_logger.debug(traceback.format_exc())
 
+EXAMPLE_REQUEST = {
+   "RequestType" : "Create",
+   "ResponseURL" : "http://pre-signed-S3-url-for-response",
+   "StackId" : "arn:aws:cloudformation:us-west-2:EXAMPLE/stack-name/guid",
+   "RequestId" : "7bfe2d54710d48dcbc6f0b26fb68c9d1",
+   "ResourceType" : "Custom::ResourceTypeName",
+   "LogicalResourceId" : "MyLogicalResourceId",
+   "ResourceProperties" : {
+      "Key" : "Value",
+      "List" : [ "1", "2", "3" ]
+   }
+}
 
-def handler_decorator(*args, **kwargs):
-    """Decorate an AWS Lambda function to add exception handling, emit
-    CloudFormation responses and log.
-
-    Usage:
-        >>> @handler_decorator
-        ... def lambda_handler(event, context):
-        ...     sum = (float(event['ResourceProperties']['key1']) +
-        ...            float(event['ResourceProperties']['key2']))
-        ...     return {'sum': sum}
-
-        >>> @handler_decorator(delete_logs=False)
-        ... def lambda_handler(event, context):
-        ...     sum = (float(event['ResourceProperties']['key1']) +
-        ...            float(event['ResourceProperties']['key2']))
-        ...     return {'sum': sum}
+def generate_request(request_type, resource_type, properties, response_url,
+        stack_id=None,
+        request_id=None,
+        logical_resource_id=None,
+        physical_resource_id=None,
+        old_properties=None):
+    """Generate a request for testing.
 
     Args:
-        delete_logs: A boolean which, when True, will cause a successful
-            stack deletion to trigger the deletion of the CloudWatch logs that
-            were generated. If delete_logs is False or if there is a problem
-            during stack deletion, the logs are left in place.
-        hide_stack_delete_failure: A boolean which, when True, will report
-            SUCCESS to CloudFormation when a stack deletion is requested
-            regardless of the success of the AWS Lambda function. This will
-            prevent stacks from being stuck in DELETE_FAILED states but will
-            potentially result in resources created by the AWS Lambda function
-            to remain in existence after stack deletion. If
-            hide_stack_delete_failure is False, an exception in the AWS Lambda
-            function will result in DELETE_FAILED upon an attempt to delete
-            the stack.
-
-    Returns:
-        A decorated function
-
-    Raises:
-        No exceptions
+        request_type: One of 'Create', 'Update', or 'Delete'.
+        resource_type: The CloudFormation resource type. If it does not begin
+            with 'Custom::', this is prepended.
+        properties: A dictionary of the fields for the resource.
+        response_url: A url or a tuple of (bucket, key) for S3. If key ends with
+            'RANDOM', a random string replaces that.
     """
-    if args:
-        return handler_decorator()(args[0])
+    import uuid, boto3
+    
+    request_type = request_type.lower()
+    if request_type not in ['create', 'update', 'delete']:
+        raise ValueError('unknown request type')
+    request_type = request_type[0].upper() + request_type[1:]
 
-    delete_logs = kwargs.get('delete_logs', True)
-    hide_stack_delete_failure = kwargs.get('hide_stack_delete_failure', True)
+    if not resource_type.startswith('Custom::'):
+        resource_type = 'Custom::' + resource_type
 
-    def inner_decorator(handler):
-        """Bind handler_decorator to handler_wrapper in order to enable passing
-        arguments into the handler_decorator decorator.
+    if not isinstance(properties, dict):
+        raise TypeError('properties must be a dict')
 
-        Args:
-            handler: The Lambda function to decorate
-
-        Returns:
-            A decorated function
-
-        Raises:
-            No exceptions
-        """
-        @wraps(handler)
-        def handler_wrapper(event, context):
-            """Executes an AWS Lambda function and emits a CloudFormation response.
-
-            Executes an AWS Lambda function (handler), catches exceptions and
-            logs them, then emits a CloudFormation custom resource response
-            indicating the handler's success or failure along with any
-            key/value pairs passed back.
-
-            Upon successful stack DELETE by the wrapped function, delete the
-            AWS Lambda CloudWatch log group created by the lambda function.
-
-            Args:
-                event: A dictionary containing CloudFormation custom resource
-                    provider request fields.[1]
-                context: An AWS LambdaContext object containing lambda runtime
-                    information.[2]
-
-            Returns:
-                The value returned by the handler.
-
-            Returns to CloudFormation:
-                TODO
-
-            Raises:
-                All exceptions are caught and logged but not raised
-
-            [1]: http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/crpg-ref-requests.html#crpg-ref-request-fields
-            [2]: http://docs.aws.amazon.com/lambda/latest/dg/python-context-object.html
-            """
-            logger.info('REQUEST RECEIVED: %s' % json.dumps(event))
-            logger.info('LambdaContext: %s' %
-                        json.dumps(vars(context), cls=PythonObjectEncoder))
-            try:
-                result = handler(event, context)
-                status = Status.FAILED if result is False else Status.SUCCESS
-                if status == Status.FAILED:
-                    message = "Function %s returned False." % handler.__name__
-                    logger.error(message)
-                    result = {'result': message}
-            except Exception as e:
-                status = Status.FAILED
-                message = ('Function %s failed due to exception "%s".' %
-                           (handler.__name__, e.message))
-                result = {'result': message}
-                logger.error(message)
-
-            if event['RequestType'] == RequestType.DELETE:
-                if status == Status.FAILED and hide_stack_delete_failure:
-                    message = (
-                        'There may be resources created by the AWS '
-                        'Lambda that have not been deleted and cleaned up '
-                        'despite the fact that the stack status may be '
-                        'DELETE_COMPLETE.')
-                    logger.error(message)
-                    result = message
-                    status = Status.SUCCESS
-
-                if status == Status.SUCCESS and delete_logs:
-                    logging.disable(logging.CRITICAL)
-                    logs_client = boto3.client('logs')
-                    logs_client.delete_log_stream(
-                        logGroupName=context.log_group_name,
-                        logStreamName=context.log_stream_name)
-            cfn_response(event,
-                         context,
-                         status,
-                         result)
-            return result
-        return handler_wrapper
-    return inner_decorator
+    if isinstance(response_url, (list, tuple)):
+        bucket, key = response_url
+        if key.endswith('RANDOM'):
+            key = key[:-6] + str(uuid.uuid4())
+        response_url = boto3.client('s3').generate_presigned_url(
+                ClientMethod='put_object',
+                HttpMethod='PUT',
+                Params={
+                    'Bucket': bucket,
+                    'Key': key})
+    
+    stack_id = stack_id or "arn:aws:cloudformation:us-west-2:EXAMPLE/stack-name/guid"
+    
+    request_id = request_id or str(uuid.uuid4())
+    
+    logical_resource_id = logical_resource_id or "MyLogicalResourceId"
+    
+    physical_resource_id = physical_resource_id or logical_resource_id
+    
+    event = {
+           "RequestType" : request_type,
+           "ResponseURL" : response_url,
+           "StackId" : stack_id,
+           "RequestId" : request_id,
+           "ResourceType" : resource_type,
+           "LogicalResourceId" : logical_resource_id,
+           "ResourceProperties" : properties
+           }
+    
+    if request_type in ['Update', 'Delete']:
+        if not physical_resource_id:
+            raise RuntimeError('physical resource id not set for %s' % request_type)
+        event['PhysicalResourceId'] = physical_resource_id
+    
+    if request_type == 'Update':
+        if not old_properties:
+            raise RuntimeError('old properties not set for %s' % request_type)
+        event['OldResourceProperties'] = old_properties
+    
+    return event

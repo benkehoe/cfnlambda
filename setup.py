@@ -20,14 +20,14 @@ setup(
     # Versions should comply with PEP440.  For a discussion on single-sourcing
     # the version across setup.py and the project code, see
     # https://packaging.python.org/en/latest/single_source_version.html
-    version='1.0.1',
+    version='1.0.0',
 
     description='Collection of tools to enable use of AWS Lambda with '
                 'CloudFormation.',
     long_description=long_description,
-    url='https://github.com/gene1wood/cfnlambda',
-    author='Gene Wood',
-    author_email='gene_wood@cementhorizon.com',
+    url='https://github.com/benkehoe/cfnlambda',
+    author='Ben Kehoe',
+    author_email='bkehoe@irobot.com',
     license='MPL-2.0',
 
     # See https://pypi.python.org/pypi?%3Aaction=list_classifiers
