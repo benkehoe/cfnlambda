@@ -18,8 +18,8 @@ Quickstart
 
     from cfnlambda import CloudFormationCustomResource
 	
-	class Adder(CloudFormationCustomResource):
-	    def create(self):
+    class Adder(CloudFormationCustomResource):
+        def create(self):
             sum = (float(self.resource_properties['key1']) + 
                    float(self.resource_properties['key2']))
             return {'sum': sum}
