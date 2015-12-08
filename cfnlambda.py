@@ -44,7 +44,15 @@ class CloudFormationCustomResource(object):
     True if self.resource_properties is valid. populate() can transfer the contents of
     self.resource_properties into object fields, if this is not done by validate().
     
-    Three hooks are provided to override behavior:
+    The class provides methods get_boto3_client() and get_boto3_resource() that cache
+    the clients/resources in the class, reducing overhead in the Lambda invocations.
+    These also rely on the get_boto3_session() method, which in turn uses
+    BOTO3_SESSION_FACTORY if it is set, allowing overriding with mock sessions for
+    testing.
+    
+    Four hooks are provided to override behavior. The first three are instance fields,
+    since they made be overridden with methods that rely on instance fields. The fourth
+    is a class field, since it is called by a class method.
     * finish_function, normally set to CloudFormationCustomResource.cfn_response, takes
         as input the custom resource object and deals with sending the response and 
         cleaning up.
@@ -62,10 +70,10 @@ class CloudFormationCustomResource(object):
         It also provides two keyword arguments:
         * prefix: if for example the physical resource id must be an arn
         * separator: defaulting to '-'.
-    * get_boto3_function takes no input and returns the boto3 module. This is used in
-        CloudFormationCustomResource.cfn_response for deleting the logs (if 
-        DELETE_LOGS_ON_STACK_DELETION is set to True). This function could be replaced
-        to use placebo https://github.com/garnaat/placebo
+    * BOTO3_SESSION_FACTORY takes no input and returns an object that acts like a boto3 session.
+        If this class field is not None, it is used by get_boto3_session() instead of creating
+        a regular boto3 session. This could be made to use placebo for testing
+        https://github.com/garnaat/placebo
 
     The class provides four configuration options that can be overridden in child
     classes:
@@ -138,10 +146,7 @@ class CloudFormationCustomResource(object):
         
         self.finish_function = self.cfn_response
         self.send_response_function = self.send_response
-        
         self.generate_physical_resource_id_function = self.get_mangled_physical_resource_id
-        
-        self.get_boto3_function = self.get_boto3
         
     def validate(self):
         """Return True if self.resource_properties is valid."""
@@ -160,6 +165,33 @@ class CloudFormationCustomResource(object):
     
     def delete(self):
         raise NotImplementedError
+    
+    BOTO3_SESSION = None
+    BOTO3_SESSION_FACTORY = None
+    BOTO3_CLIENTS = None
+    BOTO3_RESOURCES = None
+    
+    @classmethod
+    def get_boto3_session(cls):
+        if cls.BOTO3_SESSION is None:
+            if cls.BOTO3_SESSION_FACTORY:
+                cls.BOTO3_SESSION = cls.BOTO3_SESSION_FACTORY()
+            else:
+                import boto3
+                cls.BOTO3_SESSION = boto3.session.Session()
+        return cls.BOTO3_SESSION
+    
+    @classmethod
+    def get_boto3_client(cls, name):
+        if name not in cls.BOTO3_CLIENTS:
+            cls.BOTO3_CLIENTS[name] = cls.get_boto3_session().client(name)
+        return cls.BOTO3_CLIENTS[name]
+    
+    @classmethod
+    def get_boto3_resource(cls, name):
+        if name not in cls.BOTO3_RESOURCES:
+            cls.BOTO3_RESOURCES[name] = cls.get_boto3_session().resource(name)
+        return cls.BOTO3_RESOURCES[name]
     
     def handle(self, event, context):
         """Wrap this in a bare function to allow Lambda to call it"""
@@ -238,9 +270,8 @@ class CloudFormationCustomResource(object):
 
             if self.status == self.STATUS_SUCCESS and self.DELETE_LOGS_ON_STACK_DELETION:
                 import logging
-                boto3 = self.get_boto3_function()
                 logging.disable(logging.CRITICAL)
-                logs_client = boto3.client('logs')
+                logs_client = self.get_boto3_client('logs')
                 logs_client.delete_log_group(
                     logGroupName=context.log_group_name)
         
@@ -276,11 +307,6 @@ class CloudFormationCustomResource(object):
             logical_id=logical_resource_id,
             rand=''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(len_of_rand)),
             )
-    
-    @classmethod
-    def get_boto3(cls):
-        import boto3
-        return boto3
     
     @classmethod
     def send_response(cls, resource, url, response_content):
