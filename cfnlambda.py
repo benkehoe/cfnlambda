@@ -121,12 +121,14 @@ class CloudFormationCustomResource(object):
         if not resource_type:
             resource_type = self.__class__.__name__
         
-        if not (resource_type.startswith('Custom::') 
-                or resource_type == 'AWS::CloudFormation::CustomResource'):
+        if isinstance(resource_type, basestring) and (
+                not (resource_type.startswith('Custom::')
+                or resource_type == 'AWS::CloudFormation::CustomResource')):
             resource_type = 'Custom::' + resource_type
         
         self.resource_type = resource_type
         
+        self.request_resource_type = None
         self.request_type = None
         self.response_url = None
         self.stack_id = None
@@ -148,6 +150,12 @@ class CloudFormationCustomResource(object):
         self.send_response_function = self.send_response
         self.generate_physical_resource_id_function = self.generate_unique_physical_resource_id
         
+    def validate_resource_type(self, resource_type):
+        """Return True if resource_type is valid""" 
+        if isinstance(self.resource_type, (list, tuple)):
+            return resource_type in self.resource_type
+        return resource_type == self.resource_type
+    
     def validate(self):
         """Return True if self.resource_properties is valid."""
         return True
@@ -215,10 +223,6 @@ class CloudFormationCustomResource(object):
         self.event = event
         self.context = context
         
-        resource_type_in_event = event['ResourceType']
-        if resource_type_in_event != self.resource_type:
-            raise Exception('invalid resource type')
-        
         self.request_type = event['RequestType']
         self.response_url = event['ResponseURL']
         self.stack_id = event['StackId']
@@ -230,6 +234,10 @@ class CloudFormationCustomResource(object):
         self.old_resource_properties = event.get('OldResourceProperties')
         
         try:
+            self.request_resource_type = event['ResourceType']
+            if not self.validate_resource_type(self.request_resource_type):
+                raise Exception('invalid resource type')
+        
             if not self.validate():
                 pass
             
