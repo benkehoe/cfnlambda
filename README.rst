@@ -63,7 +63,7 @@ Quickstart
                 raise Exception('server termination failed')
     
     def handle(event, context):
-        ExternalServer().handle(event, context)
+        ExternalServer(resource_type="Custom::ExternalServer").handle(event, context)
 
 The :code:`handle` method on :code:`CloudFormationCustomResource` does a few things. It logs
 the event and context, populates the class fields, generates a physical resource id

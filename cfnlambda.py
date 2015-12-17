@@ -146,7 +146,6 @@ class CloudFormationCustomResource(object):
         
         self.finish_function = self.cfn_response
         self.send_response_function = self.send_response
-        self.generate_physical_resource_id_function = self.get_mangled_physical_resource_id
         
     def validate(self):
         """Return True if self.resource_properties is valid."""
@@ -345,7 +344,7 @@ class CloudFormationCustomResource(object):
         }
         resource._base_logger.debug("Response body: %s", json.dumps(response_content))
         try:
-            return resource.send_response_function(resource, resource.reponse_url, response_content)
+            return resource.send_response_function(resource, resource.response_url, response_content)
         except Exception as e:
             resource._base_logger.error("send response failed: %s" % e.message)
             resource._base_logger.debug(traceback.format_exc())
