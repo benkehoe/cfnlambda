@@ -146,6 +146,7 @@ class CloudFormationCustomResource(object):
         
         self.finish_function = self.cfn_response
         self.send_response_function = self.send_response
+        self.generate_physical_resource_id_function = self.generate_unique_physical_resource_id
         
     def validate(self):
         """Return True if self.resource_properties is valid."""
