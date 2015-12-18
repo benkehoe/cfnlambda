@@ -50,8 +50,8 @@ class CloudFormationCustomResource(object):
     BOTO3_SESSION_FACTORY if it is set, allowing overriding with mock sessions for
     testing.
     
-    Four hooks are provided to override behavior. The first three are instance fields,
-    since they made be overridden with methods that rely on instance fields. The fourth
+    Some hooks are provided to override behavior. The first four are instance fields,
+    since they may be set to functions that rely on instance fields. The last
     is a class field, since it is called by a class method.
     * finish_function, normally set to CloudFormationCustomResource.cfn_response, takes
         as input the custom resource object and deals with sending the response and 
@@ -61,6 +61,9 @@ class CloudFormationCustomResource(object):
         Normally this is set to CloudFormationCustomResource.send_response, which uses
         requests to send the content to its destination. requests is loaded either
         directly if available, falling back to the vendored version in botocore.
+    * physical_resource_id_prefix_function can be set to put a prefix on the id returned
+        by generate_unique_physical_resource_id, for example if the physical resource
+        id needs to be an ARN.
     * generate_physical_resource_id_function is used to get a physical resource id
         on a create call unless DISABLE_PHYSICAL_RESOURCE_ID_GENERATION is True.
         It takes the custom resource object as input.This is normally
@@ -153,6 +156,8 @@ class CloudFormationCustomResource(object):
         
         self.finish_function = self.cfn_response
         self.send_response_function = self.send_response
+        
+        self.physical_resource_id_prefix_function = None
         self.generate_physical_resource_id_function = self.generate_unique_physical_resource_id
         
     def validate_resource_type(self, resource_type):
@@ -290,11 +295,16 @@ class CloudFormationCustomResource(object):
         
         self.finish_function(self)
     
-    @classmethod
-    def generate_unique_physical_resource_id(cls, resource, prefix='', separator='-'):
+    def generate_unique_physical_resource_id(self, resource, prefix=None, separator='-'):
         """Generate a unique physical resource id similar to how CloudFormation does"""
         import random
         import string
+        
+        if prefix is None:
+            if self.physical_resource_id_prefix_function:
+                prefix = self.physical_resource_id_prefix_function()
+            else:
+                prefix = ''
     
         stack_id = resource.stack_id.split(':')[-1]
         if '/' in stack_id:
