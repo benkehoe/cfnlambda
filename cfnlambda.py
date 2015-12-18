@@ -121,10 +121,15 @@ class CloudFormationCustomResource(object):
         if not resource_type:
             resource_type = self.__class__.__name__
         
-        if isinstance(resource_type, basestring) and (
-                not (resource_type.startswith('Custom::')
-                or resource_type == 'AWS::CloudFormation::CustomResource')):
-            resource_type = 'Custom::' + resource_type
+        def process_resource_type(resource_type):
+            if not (resource_type.startswith('Custom::') or resource_type == 'AWS::CloudFormation::CustomResource'):
+                resource_type = 'Custom::' + resource_type
+            return resource_type
+        
+        if isinstance(resource_type, (list, tuple)):
+            resource_type = [process_resource_type(rt) for rt in resource_type]
+        elif isinstance(resource_type, basestring):
+            resource_type = process_resource_type(resource_type)
         
         self.resource_type = resource_type
         
