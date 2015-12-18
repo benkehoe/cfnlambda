@@ -61,13 +61,13 @@ class CloudFormationCustomResource(object):
         Normally this is set to CloudFormationCustomResource.send_response, which uses
         requests to send the content to its destination. requests is loaded either
         directly if available, falling back to the vendored version in botocore.
-    * physical_resource_id_prefix_function can be set to put a prefix on the id returned
-        by generate_unique_physical_resource_id, for example if the physical resource
+    * generate_unique_id_prefix_function can be set to put a prefix on the id returned
+        by generate_unique_id, for example if the physical resource
         id needs to be an ARN.
     * generate_physical_resource_id_function is used to get a physical resource id
         on a create call unless DISABLE_PHYSICAL_RESOURCE_ID_GENERATION is True.
         It takes the custom resource object as input.This is normally
-        set to CloudFormationCustomResource.generate_unique_physical_resource_id, which
+        set to CloudFormationCustomResource.generate_unique_id, which
         generates a physical resource id like CloudFormation:
         {stack_id}-{logical resource id}-{random string}
         It also provides two keyword arguments:
@@ -97,7 +97,7 @@ class CloudFormationCustomResource(object):
     * DISABLE_PHYSICAL_RESOURCE_ID_GENERATION: If True, skips the automatic generation
         of a unique physical resource id if the custom resource has a source for that
         itself.
-    * PHYSICAL_RESOURCE_ID_MAX_LEN: An int used by generate_unique_physical_resource_id
+    * PHYSICAL_RESOURCE_ID_MAX_LEN: An int used by generate_unique_id
         when generating a physical resource id.
     """
     DELETE_LOGS_ON_STACK_DELETION = False
@@ -157,8 +157,8 @@ class CloudFormationCustomResource(object):
         self.finish_function = self.cfn_response
         self.send_response_function = self.send_response
         
-        self.physical_resource_id_prefix_function = None
-        self.generate_physical_resource_id_function = self.generate_unique_physical_resource_id
+        self.generate_unique_id_prefix_function = None
+        self.generate_physical_resource_id_function = self.generate_unique_id
         
     def validate_resource_type(self, resource_type):
         """Return True if resource_type is valid""" 
@@ -252,7 +252,7 @@ class CloudFormationCustomResource(object):
                 pass
             
             if not self.physical_resource_id and not self.DISABLE_PHYSICAL_RESOURCE_ID_GENERATION:
-                self.physical_resource_id = self.generate_physical_resource_id_function(self)
+                self.physical_resource_id = self.generate_physical_resource_id_function(max_len=self.PHYSICAL_RESOURCE_ID_MAX_LEN)
             
             self.populate()
             
@@ -295,40 +295,44 @@ class CloudFormationCustomResource(object):
         
         self.finish_function(self)
     
-    def generate_unique_physical_resource_id(self, resource, prefix=None, separator='-'):
-        """Generate a unique physical resource id similar to how CloudFormation does"""
+    def generate_unique_id(self, prefix=None, separator='-', max_len=None):
+        """Generate a unique id similar to how CloudFormation generates
+        physical resource ids"""
         import random
         import string
         
         if prefix is None:
-            if self.physical_resource_id_prefix_function:
-                prefix = self.physical_resource_id_prefix_function()
+            if self.generate_unique_id_prefix_function:
+                prefix = self.generate_unique_id_prefix_function()
             else:
                 prefix = ''
     
-        stack_id = resource.stack_id.split(':')[-1]
+        stack_id = self.stack_id.split(':')[-1]
         if '/' in stack_id:
             stack_id = stack_id.split('/')[1]
         stack_id = stack_id.replace('-', '')
     
-        max_len = resource.PHYSICAL_RESOURCE_ID_MAX_LEN-len(prefix)
-        
-        logical_resource_id = resource.logical_resource_id
+        logical_resource_id = self.logical_resource_id
     
         len_of_rand = 12
-        len_of_parts = max_len - len_of_rand - 2 * len(separator)
-        len_of_parts_diff = (len(stack_id) + len(logical_resource_id)) - len_of_parts
-        if len_of_parts_diff > 0:
-            len_of_stack_id = min(len(stack_id), len(stack_id) - len_of_parts_diff // 2)
-            len_of_resource = len_of_parts - len_of_stack_id
-            stack_id = stack_id[:len_of_stack_id]
-            logical_resource_id = logical_resource_id[:len_of_resource]
+        
+        rand = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(len_of_rand))
+        
+        if max_len:
+            max_len = max_len-len(prefix)
+            len_of_parts = max_len - len_of_rand - 2 * len(separator)
+            len_of_parts_diff = (len(stack_id) + len(logical_resource_id)) - len_of_parts
+            if len_of_parts_diff > 0:
+                len_of_stack_id = min(len(stack_id), len(stack_id) - len_of_parts_diff // 2)
+                len_of_resource = len_of_parts - len_of_stack_id
+                stack_id = stack_id[:len_of_stack_id]
+                logical_resource_id = logical_resource_id[:len_of_resource]
         return '{prefix}{stack_id}{separator}{logical_id}{separator}{rand}'.format(
             prefix=prefix,
             separator=separator,
             stack_id=stack_id,
             logical_id=logical_resource_id,
-            rand=''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(len_of_rand)),
+            rand=rand,
             )
     
     @classmethod
