@@ -21,13 +21,16 @@ class CloudFormationCustomResource(object):
     To create a handler for a custom resource in CloudFormation, simply create a
     child class (say, MyCustomResource), implement the methods specified below,
     and implement the handler function:
+    
     def handler(event, context):
         MyCustomResource().handle(event, context)
     
     The child class does not need to have a constructor. In this case, the resource
     type name, which is validated by handle() method, is 'Custom::' + the child 
     class name. The logger also uses the child class name. If either of these need
-    to be different, they can be provided to the parent constructor.
+    to be different, they can be provided to the parent constructor. The resource
+    type passed to the parent constructor can be a string or a list of strings, if
+    the child class is capable of processing multiple resource types.
     
     Child classes must implement the create(), update(), and delete() methods.
     Each of these methods can indicate success or failure in one of two ways:
@@ -48,7 +51,9 @@ class CloudFormationCustomResource(object):
     the clients/resources in the class, reducing overhead in the Lambda invocations.
     These also rely on the get_boto3_session() method, which in turn uses
     BOTO3_SESSION_FACTORY if it is set, allowing overriding with mock sessions for
-    testing.
+    testing. Similarly, BOTO3_CLIENT_FACTORY and BOTO3_RESOURCE_FACTORY, both of which
+    can be set to callables that take a session and a name, can be set to override
+    client and resource creation.
     
     Some hooks are provided to override behavior. The first four are instance fields,
     since they may be set to functions that rely on instance fields. The last
@@ -115,6 +120,7 @@ class CloudFormationCustomResource(object):
     
     def __init__(self, resource_type=None, logger=None):
         import logging
+        import boto3
         if logger:
             self.logger = logger
         else:
@@ -136,6 +142,9 @@ class CloudFormationCustomResource(object):
         
         self.resource_type = resource_type
         
+        self.event = None
+        self.context = None
+        
         self.request_resource_type = None
         self.request_type = None
         self.response_url = None
@@ -146,9 +155,6 @@ class CloudFormationCustomResource(object):
         self.physical_resource_id = None
         self.resource_properties = None
         self.old_resource_properties = None
-        
-        self.event = None
-        self.context = None
         
         self.status = None
         self.failure_reason = None
@@ -184,8 +190,11 @@ class CloudFormationCustomResource(object):
     def delete(self):
         raise NotImplementedError
     
-    BOTO3_SESSION = None
     BOTO3_SESSION_FACTORY = None
+    BOTO3_CLIENT_FACTORY = None
+    BOTO3_RESOURCE_FACTORY = None
+    
+    BOTO3_SESSION = None
     BOTO3_CLIENTS = None
     BOTO3_RESOURCES = None
     
@@ -202,13 +211,21 @@ class CloudFormationCustomResource(object):
     @classmethod
     def get_boto3_client(cls, name):
         if name not in cls.BOTO3_CLIENTS:
-            cls.BOTO3_CLIENTS[name] = cls.get_boto3_session().client(name)
+            if cls.BOTO3_CLIENT_FACTORY:
+                client = cls.BOTO3_CLIENT_FACTORY(cls.get_boto3_session(), name)
+            else:
+                client = cls.get_boto3_session().client(name)
+            cls.BOTO3_CLIENTS[name] = client
         return cls.BOTO3_CLIENTS[name]
     
     @classmethod
     def get_boto3_resource(cls, name):
         if name not in cls.BOTO3_RESOURCES:
-            cls.BOTO3_RESOURCES[name] = cls.get_boto3_session().resource(name)
+            if cls.BOTO3_RESOURCE_FACTORY:
+                resource = cls.BOTO3_RESOURCE_FACTORY(cls.get_boto3_session(), name)
+            else:
+                resource = cls.get_boto3_session().resource(name)
+            cls.BOTO3_RESOURCES[name] = resource
         return cls.BOTO3_RESOURCES[name]
     
     def handle(self, event, context):
@@ -233,6 +250,7 @@ class CloudFormationCustomResource(object):
         self.event = event
         self.context = context
         
+        self.request_resource_type = event['ResourceType']
         self.request_type = event['RequestType']
         self.response_url = event['ResponseURL']
         self.stack_id = event['StackId']
@@ -243,8 +261,11 @@ class CloudFormationCustomResource(object):
         self.resource_properties = event.get('ResourceProperties', {})
         self.old_resource_properties = event.get('OldResourceProperties')
         
+        self.status = None
+        self.failure_reason = None
+        self.resource_outputs = {}
+        
         try:
-            self.request_resource_type = event['ResourceType']
             if not self.validate_resource_type(self.request_resource_type):
                 raise Exception('invalid resource type')
         
