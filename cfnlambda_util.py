@@ -1,3 +1,9 @@
+"""
+This module provides a utility function, generate_request, to create events
+for using in testing.
+"""
+
+
 import uuid
 import boto3
 

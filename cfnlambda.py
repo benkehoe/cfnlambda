@@ -7,9 +7,6 @@ all of its importing inside its methods, so it can be copied over to, for
 example, write the Lambda function in the browser-based editor, or inline in
 CloudFormation once it supports that for Python.
 
-The module also provides a utilty function, generate_request, to create events
-for using in testing.
-
 This Source Code Form is subject to the terms of the Mozilla Public
 License, v. 2.0. If a copy of the MPL was not distributed with this
 file, You can obtain one at http://mozilla.org/MPL/2.0/.
@@ -382,6 +379,11 @@ class CloudFormationCustomResource(object):
             physical_resource_id = resource.context.log_stream_name
         default_reason = ("See the details in CloudWatch Log Stream: %s" %
                        resource.context.log_stream_name)
+        outputs = {}
+        for key, value in resource.resource_outputs.iteritems():
+            if not isinstance(value, basestring):
+                value = json.dumps(value)
+            outputs[key] = value
         response_content = {
             "Status": resource.status,
             "Reason": resource.failure_reason or default_reason,
@@ -389,7 +391,7 @@ class CloudFormationCustomResource(object):
             "StackId": resource.event['StackId'],
             "RequestId": resource.event['RequestId'],
             "LogicalResourceId": resource.event['LogicalResourceId'],
-            "Data": resource.resource_outputs
+            "Data": outputs
         }
         resource._base_logger.debug("Response body: %s", json.dumps(response_content))
         try:
