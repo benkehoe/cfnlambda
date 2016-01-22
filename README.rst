@@ -113,8 +113,8 @@ How to contribute
 -----------------
 Feel free to open issues or fork and submit PRs.
 
-* Issue Tracker: https://github.com/benkehoe/cfnlambda/issues
-* Source Code: https://github.com/benkehoe/cfnlambda
+* Issue Tracker: https://github.com/iRobotCorporation/cfnlambda/issues
+* Source Code: https://github.com/iRobotCorporation/cfnlambda
 
 .. _library of the same name: https://github.com/gene1wood/cfnlambda
 .. _AWS CloudFormation custom resources: http://docs.aws.amazon.com/AWSCloudFormation/latest/UserGuide/template-custom-resources.html
