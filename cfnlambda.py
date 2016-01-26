@@ -192,8 +192,8 @@ class CloudFormationCustomResource(object):
     BOTO3_RESOURCE_FACTORY = None
     
     BOTO3_SESSION = None
-    BOTO3_CLIENTS = None
-    BOTO3_RESOURCES = None
+    BOTO3_CLIENTS = {}
+    BOTO3_RESOURCES = {}
     
     @classmethod
     def get_boto3_session(cls):

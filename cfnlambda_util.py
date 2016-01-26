@@ -3,10 +3,6 @@ This module provides a utility function, generate_request, to create events
 for using in testing.
 """
 
-
-import uuid
-import boto3
-
 EXAMPLE_REQUEST = {
    "RequestType" : "Create",
    "ResponseURL" : "http://pre-signed-S3-url-for-response",
@@ -37,6 +33,9 @@ def generate_request(request_type, resource_type, properties, response_url,
             'RANDOM', a random string replaces that.
     """
     
+    import uuid
+    import boto3
+
     request_type = request_type.lower()
     if request_type not in ['create', 'update', 'delete']:
         raise ValueError('unknown request type')
@@ -88,3 +87,37 @@ def generate_request(request_type, resource_type, properties, response_url,
         event['OldResourceProperties'] = old_properties
     
     return event
+
+class MockLambdaContext(object):
+    def __init__(self,
+            function_name='FunctionName',
+            function_version='$LATEST',
+            memory_size=128,
+            timeout=3,
+            start=None):
+        import time, uuid
+        
+        if start is None:
+            start = time.time()
+
+        self._timeout = timeout
+        self._start = start
+        self._get_time = time.time
+
+        self.function_name = function_name
+        self.function_version = function_version
+        self.invoked_function_arn = 'arn:aws:lambda:us-east-1:000000000000:function:{}:{}'.format(self.function_name, self.function_version)
+        self.memory_limit_in_mb = memory_size
+        self.aws_request_id = str(uuid.uuid4())
+        self.log_group_name = '/aws/lambda/{}'.format(self.function_name)
+        self.log_stream_name = '{}/[{}]{}'.format(
+            time.strftime('%Y/%m/%d', time.gmtime(self._start)),
+            self.function_version,
+            self.aws_request_id)
+        self.identity = None
+        self.client_context = None
+
+    def get_remaining_time_in_millis(self):
+        time_used = self._get_time()- self._start
+        time_left = self._timeout * 1000 - time_used
+        return int(round(time_left * 1000))

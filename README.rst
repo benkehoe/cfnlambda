@@ -38,6 +38,24 @@ Quickstart
 
     from cfnlambda import CloudFormationCustomResource
 	
+    class AWSServiceUnsupportedByCF(CloudFormationCustomResource):
+        def create(self):
+            client = self.get_boto3_client('service-name')
+            # use client
+        
+        def update(self):
+            # create and use client
+        
+        def delete(self):
+            # create and use client
+    
+    def handle(event, context):
+        AWSServiceUnsupportedByCF().handle(event, context)
+
+::
+
+    from cfnlambda import CloudFormationCustomResource
+	
     class ExternalServer(CloudFormationCustomResource):
         DISABLE_PHYSICAL_RESOURCE_ID_GENERATION = True # get this from server
         
@@ -97,17 +115,6 @@ the stack will show a status of DELETE_COMPLETE, there could still be resources
 which your AWS Lambda function created which have not been deleted. This will be
 noted in the logs. To disable this feature, set HIDE_STACK_DELETE_FAILURE 
 class field to False.
-
-::
-
-    from cfnlambda import handler_decorator
-
-    @handler_decorator(hide_stack_delete_failure=False)
-    def lambda_handler(event, context):
-        raise Exception(
-            'This will result in a CloudFormation stack stuck in a
-            DELETE_FAILED state')
-
 
 How to contribute
 -----------------
