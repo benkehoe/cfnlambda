@@ -115,6 +115,8 @@ class CloudFormationCustomResource(object):
     REQUEST_DELETE = 'Delete'
     REQUEST_UPDATE = 'Update'
     
+    BASE_LOGGER_LEVEL = None
+    
     def __init__(self, resource_type=None, logger=None):
         import logging
         import boto3
@@ -122,7 +124,10 @@ class CloudFormationCustomResource(object):
             self.logger = logger
         else:
             self.logger = logging.getLogger(self.__class__.__name__)
+        
         self._base_logger = logging.getLogger('CFCustomResource')
+        if self.BASE_LOGGER_LEVEL:
+            self._base_logger.setLevel(self.BASE_LOGGER_LEVEL)
         
         if not resource_type:
             resource_type = self.__class__.__name__
