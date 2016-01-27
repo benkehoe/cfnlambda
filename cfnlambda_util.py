@@ -32,7 +32,7 @@ def generate_request(request_type, resource_type, properties, response_url,
         response_url: A url or a tuple of (bucket, key) for S3. If key ends with
             'RANDOM', a random string replaces that.
     """
-    
+
     import uuid
     import boto3
 
@@ -57,15 +57,15 @@ def generate_request(request_type, resource_type, properties, response_url,
                 Params={
                     'Bucket': bucket,
                     'Key': key})
-    
+
     stack_id = stack_id or "arn:aws:cloudformation:us-west-2:EXAMPLE/stack-name/guid"
-    
+
     request_id = request_id or str(uuid.uuid4())
-    
+
     logical_resource_id = logical_resource_id or "MyLogicalResourceId"
-    
+
     physical_resource_id = physical_resource_id or logical_resource_id
-    
+
     event = {
            "RequestType" : request_type,
            "ResponseURL" : response_url,
@@ -75,17 +75,17 @@ def generate_request(request_type, resource_type, properties, response_url,
            "LogicalResourceId" : logical_resource_id,
            "ResourceProperties" : properties
            }
-    
+
     if request_type in ['Update', 'Delete']:
         if not physical_resource_id:
             raise RuntimeError('physical resource id not set for %s' % request_type)
         event['PhysicalResourceId'] = physical_resource_id
-    
+
     if request_type == 'Update':
         if not old_properties:
             raise RuntimeError('old properties not set for %s' % request_type)
         event['OldResourceProperties'] = old_properties
-    
+
     return event
 
 class MockLambdaContext(object):
@@ -96,7 +96,7 @@ class MockLambdaContext(object):
             timeout=3,
             start=None):
         import time, uuid
-        
+
         if start is None:
             start = time.time()
 
