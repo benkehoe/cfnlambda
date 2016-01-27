@@ -119,7 +119,6 @@ class CloudFormationCustomResource(object):
     
     def __init__(self, resource_type=None, logger=None):
         import logging
-        import boto3
         if logger:
             self.logger = logger
         else:
@@ -229,7 +228,10 @@ class CloudFormationCustomResource(object):
                 resource = cls.get_boto3_session().resource(name)
             cls.BOTO3_RESOURCES[name] = resource
         return cls.BOTO3_RESOURCES[name]
-    
+
+    def __call__(self, event, context):
+        return self.handle(event, context)
+
     def handle(self, event, context):
         """Wrap this in a bare function to allow Lambda to call it"""
         import json

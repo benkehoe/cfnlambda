@@ -31,8 +31,7 @@ Quickstart
         def delete(self):
             pass
     
-    def handle(event, context):
-        Adder().handle(event, context)
+    handle = Adder()
 
 ::
 
@@ -49,8 +48,7 @@ Quickstart
         def delete(self):
             # create and use client
     
-    def handle(event, context):
-        AWSServiceUnsupportedByCF().handle(event, context)
+    handle = AWSServiceUnsupportedByCF()
 
 ::
 
@@ -80,8 +78,7 @@ Quickstart
             if response.status != 200:
                 raise Exception('server termination failed')
     
-    def handle(event, context):
-        ExternalServer().handle(event, context)
+    handle = ExternalServer()
 
 The :code:`handle` method on :code:`CloudFormationCustomResource` does a few things. It logs
 the event and context, populates the class fields, generates a physical resource id
