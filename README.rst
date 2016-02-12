@@ -2,7 +2,7 @@ cfnlambda
 =========
 
 :code:`cfnlambda` provides an abstract base class to make it easier to implement
-`AWS CloudFormation custom resources`_. It was forked from Gene Wood's
+`AWS CloudFormation custom resources`_. It was developed from Gene Wood's
 `library of the same name`_, which provides lower-level functions and
 decorators for the same purpose.
 
@@ -31,7 +31,7 @@ Quickstart
         def delete(self):
             pass
 
-    handle = Adder()
+    handler = Adder.get_handler()
 
 ::
 
@@ -48,7 +48,7 @@ Quickstart
         def delete(self):
             # create and use client
 
-    handle = AWSServiceUnsupportedByCF()
+    handler = AWSServiceUnsupportedByCF.get_handler()
 
 ::
 
@@ -78,7 +78,7 @@ Quickstart
             if response.status != 200:
                 raise Exception('server termination failed')
 
-    handle = ExternalServer()
+    handler = ExternalServer.get_handler()
 
 The :code:`handle` method on :code:`CloudFormationCustomResource` does a few things. It logs
 the event and context, populates the class fields, generates a physical resource id

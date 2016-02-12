@@ -17,10 +17,9 @@ class CloudFormationCustomResource(object):
 
     To create a handler for a custom resource in CloudFormation, simply create a
     child class (say, MyCustomResource), implement the methods specified below,
-    and implement the handler function:
+    and create the handler function:
 
-    def handler(event, context):
-        MyCustomResource().handle(event, context)
+    handler = MyCustomResource.get_handler()
 
     The child class does not need to have a constructor. In this case, the resource
     type name, which is validated by handle() method, is 'Custom::' + the child
@@ -229,11 +228,20 @@ class CloudFormationCustomResource(object):
             cls.BOTO3_RESOURCES[name] = resource
         return cls.BOTO3_RESOURCES[name]
 
-    def __call__(self, event, context):
-        return self.handle(event, context)
+    @classmethod
+    def get_handler(cls, *args, **kwargs):
+        """Returns a handler suitable for Lambda to call. The handler creates an
+        instance of the class in every call, passing any arguments given to
+        get_handler.
+        
+        Use like:
+        handler = MyCustomResource.get_handler()"""
+        def handler(event, context):
+            return cls(*args, **kwargs).handle(event, context)
+        return handler
 
     def handle(self, event, context):
-        """Wrap this in a bare function to allow Lambda to call it"""
+        """Use the get_handler class method to get a handler that calls this method."""
         import json
         self._base_logger.info('REQUEST RECEIVED: %s' % json.dumps(event))
         def plainify(obj):
