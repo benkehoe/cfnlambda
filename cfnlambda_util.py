@@ -78,12 +78,12 @@ def generate_request(request_type, resource_type, properties, response_url,
 
     if request_type in ['Update', 'Delete']:
         if not physical_resource_id:
-            raise RuntimeError('physical resource id not set for %s' % request_type)
+            raise RuntimeError('physical resource id not set for {}'.format(request_type))
         event['PhysicalResourceId'] = physical_resource_id
 
     if request_type == 'Update':
         if not old_properties:
-            raise RuntimeError('old properties not set for %s' % request_type)
+            raise RuntimeError('old properties not set for {}'.format(request_type))
         event['OldResourceProperties'] = old_properties
 
     return event
@@ -94,7 +94,9 @@ class MockLambdaContext(object):
             function_version='$LATEST',
             memory_size=128,
             timeout=3,
-            start=None):
+            start=None,
+            region='us-east-1',
+            account_id='123456789012'):
         import time, uuid
 
         if start is None:
@@ -106,7 +108,11 @@ class MockLambdaContext(object):
 
         self.function_name = function_name
         self.function_version = function_version
-        self.invoked_function_arn = 'arn:aws:lambda:us-east-1:000000000000:function:{}:{}'.format(self.function_name, self.function_version)
+        self.invoked_function_arn = 'arn:aws:lambda:{region}:{account_id}:function:{name}:{version}'.format(
+                name=self.function_name,
+                version=self.function_version,
+                region=region,
+                account_id=account_id)
         self.memory_limit_in_mb = memory_size
         self.aws_request_id = str(uuid.uuid4())
         self.log_group_name = '/aws/lambda/{}'.format(self.function_name)
@@ -118,6 +124,6 @@ class MockLambdaContext(object):
         self.client_context = None
 
     def get_remaining_time_in_millis(self):
-        time_used = self._get_time()- self._start
+        time_used = self._get_time() - self._start
         time_left = self._timeout * 1000 - time_used
         return int(round(time_left * 1000))

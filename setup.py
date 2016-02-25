@@ -25,7 +25,7 @@ setup(
     description='Collection of tools to enable use of AWS Lambda with '
                 'CloudFormation.',
     long_description=long_description,
-    url='https://github.com/benkehoe/cfnlambda',
+    url='https://github.com/iRobotCorporation/cfnlambda',
     author='Ben Kehoe',
     author_email='bkehoe@irobot.com',
     license='MPL-2.0',

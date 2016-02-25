@@ -233,7 +233,7 @@ class CloudFormationCustomResource(object):
         """Returns a handler suitable for Lambda to call. The handler creates an
         instance of the class in every call, passing any arguments given to
         get_handler.
-        
+
         Use like:
         handler = MyCustomResource.get_handler()"""
         def handler(event, context):
@@ -352,7 +352,7 @@ class CloudFormationCustomResource(object):
         rand = ''.join(random.choice(string.ascii_uppercase + string.digits) for _ in range(len_of_rand))
 
         if max_len:
-            max_len = max_len-len(prefix)
+            max_len = max_len - len(prefix)
             len_of_parts = max_len - len_of_rand - 2 * len(separator)
             len_of_parts_diff = (len(stack_id) + len(logical_resource_id)) - len_of_parts
             if len_of_parts_diff > 0:
@@ -414,3 +414,123 @@ class CloudFormationCustomResource(object):
         except Exception as e:
             resource._base_logger.error("send response failed: %s" % e.message)
             resource._base_logger.debug(traceback.format_exc())
+
+if __name__ == '__main__':
+    import argparse, zipfile, sys, os.path, StringIO
+    try:
+        import boto3, botocore
+        parser = argparse.ArgumentParser(description='Deploy a CloudFormation custom resource handler')
+        parser.add_argument('file', help='the python file to use')
+        parser.add_argument('role', nargs='?',
+                            help='the role to use (only required when function has not been previously deployed)')
+        parser.add_argument('--name', '-n',
+                            help='set the Lambda function name, defaults to the module name')
+        parser.add_argument('--zip-output', '-o', help='path to save the zip file')
+        parser.add_argument('--handler', default='handler', help='set the handler function name, defaults to \'handler\'')
+        parser.add_argument('--publish', action='store_true', help='publish a version for this code')
+        parser.add_argument('--verbose', '-v', action='store_true', help='print debugging information')
+
+        args = parser.parse_args()
+
+        timeout = 300
+        memory = 128
+
+        module = os.path.basename(args.file).split('.')[0]
+        name = args.name or module
+        role = args.role
+        if '.' in args.handler:
+            handler = args.handler
+        else:
+            handler = module + '.' + args.handler
+
+        if args.verbose: print 'reading files'
+        with open(args.file, 'r') as fp:
+            f = fp.read()
+        with open(__file__, 'r') as fp:
+            me = fp.read()
+
+        if args.verbose: print 'creating zip file'
+        if args.zip_output:
+            z = zipfile.ZipFile(args.zip_output, 'w', zipfile.ZIP_DEFLATED)
+        else:
+            sio = StringIO.StringIO()
+            z = zipfile.ZipFile(sio, 'w', zipfile.ZIP_DEFLATED)
+
+        info = zipfile.ZipInfo(os.path.basename(args.file))
+        info.external_attr = 0444 << 16L
+        z.writestr(info, f)
+
+        info = zipfile.ZipInfo(os.path.basename(__file__))
+        info.external_attr = 0444 << 16L
+        z.writestr(info, me)
+
+        z.close()
+
+        if args.verbose: print 'loading zip file'
+        if args.zip_output:
+            with open(args.zip_output, 'rb') as fp:
+                zip_data = fp.read()
+        else:
+            zip_data = sio.getvalue()
+
+        client = boto3.client('lambda')
+
+        exists = False
+        try:
+            if args.verbose: print 'testing if function exists'
+            response = client.get_function_configuration(FunctionName=name)
+            current_role = response['Role']
+            current_handler = response['Handler']
+            timeout = response['Timeout']
+            memory = response['MemorySize']
+            if args.verbose: print 'function exists'
+            exists = True
+        except botocore.exceptions.ClientError as e:
+            if not e.response['ResponseMetadata']['HTTPStatusCode'] == 404:
+                raise
+            if args.verbose: print 'function does not exist'
+
+        if role and not role.startswith('arn:'):
+            response = boto3.client('iam').get_role(RoleName=role)
+            role = response['Role']['Arn']
+
+        if not exists:
+            if args.verbose: print 'creating function'
+            if not role:
+                sys.stderr.write('[ERROR] role not given\n')
+                sys.exit(1)
+            response = client.create_function(
+                    FunctionName=name,
+                    Runtime='python2.7',
+                    Role=role,
+                    Handler=handler,
+                    Code={'ZipFile': zip_data},
+                    Timeout=timeout,
+                    MemorySize=memory,
+                    Publish=args.publish)
+            arn = response['FunctionArn']
+        else:
+            role_changed = (role and role != current_role)
+            if role_changed and args.verbose: print 'role changed'
+            handler_changed = (current_handler != handler)
+            if handler_changed and args.verbose: print 'handler changed'
+            if role_changed or handler_changed:
+                if args.verbose: print 'updating function configuration'
+                client.update_function_configuration(
+                        FunctionName=name,
+                        Role=role or current_role,
+                        Handler=handler,
+                        Timeout=timeout,
+                        MemorySize=memory)
+
+            if args.verbose: print 'updating function code'
+            response = client.update_function_code(
+                    FunctionName=name,
+                    ZipFile=zip_data,
+                    Publish=args.publish)
+            arn = response['FunctionArn']
+
+        print arn
+    except Exception, e:
+        sys.stderr.write('[ERROR] an exception occurred: {} {}\n'.format(type(e).__name__, e))
+        sys.exit(1)

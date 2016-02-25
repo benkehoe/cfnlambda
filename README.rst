@@ -113,6 +113,18 @@ which your AWS Lambda function created which have not been deleted. This will be
 noted in the logs. To disable this feature, set HIDE_STACK_DELETE_FAILURE
 class field to False.
 
+To deploy MyCustomResource.py, simply run
+
+::
+
+    python cfnlambda.py path/to/MyCustomResource.py IAMRoleName
+
+This will create a Lambda function named MyCustomResource and print the ARN.
+Note that the role is only required if the function doesn't yet exist, so 
+subsequent deploys can omit it. The timeout is 5 minutes and the memory size
+is 128 MB. If these are changed manually, redeploying will not overwrite your
+changes.
+
 How to contribute
 -----------------
 Feel free to open issues or fork and submit PRs.
