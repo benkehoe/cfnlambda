@@ -16,7 +16,7 @@ EXAMPLE_REQUEST = {
    }
 }
 
-def generate_request(request_type, resource_type, properties, response_url,
+def generate_request(request_type, resource_type, properties=None, response_url=None,
         stack_id=None,
         request_id=None,
         logical_resource_id=None,
@@ -44,7 +44,7 @@ def generate_request(request_type, resource_type, properties, response_url,
     if not resource_type.startswith('Custom::'):
         resource_type = 'Custom::' + resource_type
 
-    if not isinstance(properties, dict):
+    if properties is not None and not isinstance(properties, dict):
         raise TypeError('properties must be a dict')
 
     if isinstance(response_url, (list, tuple)):
