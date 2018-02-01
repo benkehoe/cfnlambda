@@ -1,3 +1,5 @@
+Note: this repo has been migrated to https://github.com/iRobotCorporation/cfn-custom-resource
+
 cfnlambda
 =========
 
