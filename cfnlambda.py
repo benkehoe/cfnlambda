@@ -298,7 +298,7 @@ class CloudFormationCustomResource(object):
 
             if not self.status:
                 self.status = self.STATUS_SUCCESS
-        except Exception, e:
+        except Exception as e:
             import traceback
             if not self.status:
                 self.status = self.STATUS_FAILED
@@ -531,6 +531,6 @@ if __name__ == '__main__':
             arn = response['FunctionArn']
 
         print arn
-    except Exception, e:
+    except Exception as e:
         sys.stderr.write('[ERROR] an exception occurred: {} {}\n'.format(type(e).__name__, e))
         sys.exit(1)
